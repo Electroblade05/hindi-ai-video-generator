@@ -1,41 +1,54 @@
 import os
+import asyncio
+import edge_tts
 
-from openai import OpenAI
 
-from config import OPENAI_API_KEY, TTS_MODEL
+DEFAULT_VOICE = "hi-IN-SwaraNeural"
+
+
+async def _generate_voice(
+    text,
+    output_path,
+    voice
+):
+    communicate = edge_tts.Communicate(
+        text=text,
+        voice=voice
+    )
+
+    await communicate.save(output_path)
 
 
 def generate_hindi_voice(
     text,
     output_path,
-    voice="alloy"
+    voice=DEFAULT_VOICE
 ):
 
-    if not OPENAI_API_KEY:
+    if not text or not text.strip():
+        raise ValueError(
+            "Hindi text is empty."
+        )
+
+    output_dir = os.path.dirname(output_path)
+
+    if output_dir:
+        os.makedirs(
+            output_dir,
+            exist_ok=True
+        )
+
+    asyncio.run(
+        _generate_voice(
+            text,
+            output_path,
+            voice
+        )
+    )
+
+    if not os.path.exists(output_path):
         raise RuntimeError(
-            "OPENAI_API_KEY is missing."
+            "Hindi voice generation failed."
         )
-
-    client = OpenAI(
-        api_key=OPENAI_API_KEY
-    )
-
-    os.makedirs(
-        os.path.dirname(output_path),
-        exist_ok=True
-    )
-
-    with client.audio.speech.with_streaming_response.create(
-        model=TTS_MODEL,
-        voice=voice,
-        input=text,
-        instructions=(
-            "Speak naturally in Hindi. "
-            "Use clear pronunciation, moderate speed, "
-            "and an engaging documentary narration style."
-        )
-    ) as response:
-
-        response.stream_to_file(output_path)
 
     return output_path
