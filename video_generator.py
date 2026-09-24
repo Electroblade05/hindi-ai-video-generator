@@ -1,348 +1,146 @@
 import os
-import re
 import subprocess
-
-import imageio_ffmpeg
-
-from PIL import Image
 
 from config import FPS
 
 
-FFMPEG = imageio_ffmpeg.get_ffmpeg()
+FFMPEG = "ffmpeg"
 
 
-# ============================================================
-# MEDIA DURATION
-# ============================================================
+def get_media_duration(media_path):
+    """
+    Get the duration of an audio/video file in seconds.
+    """
 
-def get_media_duration(
-    file_path,
-):
-
-    if not os.path.exists(
-        file_path
-    ):
-
-        raise FileNotFoundError(
-            file_path
-        )
+    if not media_path or not os.path.exists(media_path):
+        return 0.0
 
     command = [
         FFMPEG,
         "-i",
-        file_path,
+        media_path,
     ]
 
-    result = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-    match = re.search(
-        r"Duration:\s*(\d+):(\d+):([\d.]+)",
-        result.stderr,
-    )
-
-    if not match:
-
-        raise RuntimeError(
-            "Could not determine media duration:\n"
-            + result.stderr[-2000:]
-        )
-
-    hours = int(
-        match.group(1)
-    )
-
-    minutes = int(
-        match.group(2)
-    )
-
-    seconds = float(
-        match.group(3)
-    )
-
-    return (
-        hours * 3600
-        + minutes * 60
-        + seconds
-    )
-
-
-# ============================================================
-# PREPARE IMAGE
-# ============================================================
-
-def prepare_image(
-    image_path,
-    width,
-    height,
-):
-
-    if not os.path.exists(
-        image_path
-    ):
-
-        raise FileNotFoundError(
-            image_path
-        )
-
     try:
-
-        image = Image.open(
-            image_path
-        ).convert("RGB")
-
-        target_ratio = (
-            width / height
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
 
-        image_ratio = (
-            image.width / image.height
-        )
+        output = result.stderr
 
-        if image_ratio > target_ratio:
+        for line in output.splitlines():
 
-            new_height = image.height
+            if "Duration:" in line:
 
-            new_width = int(
-                new_height * target_ratio
-            )
-
-            left = (
-                image.width - new_width
-            ) // 2
-
-            image = image.crop(
-                (
-                    left,
-                    0,
-                    left + new_width,
-                    new_height,
+                duration_text = (
+                    line.split("Duration:")[1]
+                    .split(",")[0]
+                    .strip()
                 )
-            )
 
-        else:
-
-            new_width = image.width
-
-            new_height = int(
-                new_width / target_ratio
-            )
-
-            top = (
-                image.height - new_height
-            ) // 2
-
-            image = image.crop(
-                (
-                    0,
-                    top,
-                    new_width,
-                    top + new_height,
+                hours, minutes, seconds = (
+                    duration_text.split(":")
                 )
-            )
 
-        image = image.resize(
-            (
-                width * 2,
-                height * 2,
-            ),
-            Image.Resampling.LANCZOS,
-        )
+                return (
+                    float(hours) * 3600
+                    + float(minutes) * 60
+                    + float(seconds)
+                )
 
-        image.save(
-            image_path,
-            "PNG",
-        )
+    except Exception:
+        pass
 
-    except Exception as error:
+    return 0.0
 
-        raise RuntimeError(
-            "Could not prepare scene image:\n"
-            + str(error)
-        )
-
-    return image_path
-
-
-# ============================================================
-# MOTION SCENE
-# ============================================================
 
 def create_motion_scene(
     image_path,
     output_path,
     duration,
-    width,
-    height,
-    effect,
+    width=1080,
+    height=1920,
+    zoom_start=1.0,
+    zoom_end=1.08,
 ):
+    """
+    Create a vertical 9:16 animated video
+    from a still image using a slow zoom effect.
+    """
 
-    if not os.path.exists(
-        image_path
-    ):
-
+    if not os.path.exists(image_path):
         raise FileNotFoundError(
-            image_path
+            f"Image not found: {image_path}"
         )
 
-    os.makedirs(
-        os.path.dirname(output_path)
-        or ".",
-        exist_ok=True,
-    )
+    duration = max(float(duration), 0.1)
 
-    prepare_image(
-        image_path=image_path,
-        width=width,
-        height=height,
-    )
-
-    frames = max(
+    total_frames = max(
+        int(duration * FPS),
         1,
-        int(round(duration * FPS)),
     )
 
-    denominator = max(
-        1,
-        frames - 1,
-    )
+    if total_frames > 1:
 
-    # ========================================================
-    # ZOOM IN
-    # ========================================================
-
-    if effect == "zoom_in":
-
-        zoom_expression = (
-            f"1+0.15*on/{denominator}"
-        )
-
-        x_expression = (
-            "iw/2-(iw/zoom/2)"
-        )
-
-        y_expression = (
-            "ih/2-(ih/zoom/2)"
-        )
-
-    # ========================================================
-    # ZOOM OUT
-    # ========================================================
-
-    elif effect == "zoom_out":
-
-        zoom_expression = (
-            f"1.15-0.15*on/{denominator}"
-        )
-
-        x_expression = (
-            "iw/2-(iw/zoom/2)"
-        )
-
-        y_expression = (
-            "ih/2-(ih/zoom/2)"
-        )
-
-    # ========================================================
-    # PAN LEFT
-    # ========================================================
-
-    elif effect == "pan_left":
-
-        zoom_expression = "1.08"
-
-        x_expression = (
-            f"(iw-iw/zoom)*on/{denominator}"
-        )
-
-        y_expression = (
-            "ih/2-(ih/zoom/2)"
-        )
-
-    # ========================================================
-    # PAN RIGHT
-    # ========================================================
-
-    elif effect == "pan_right":
-
-        zoom_expression = "1.08"
-
-        x_expression = (
-            f"(iw-iw/zoom)*(1-on/{denominator})"
-        )
-
-        y_expression = (
-            "ih/2-(ih/zoom/2)"
-        )
+        zoom_step = (
+            zoom_end - zoom_start
+        ) / (total_frames - 1)
 
     else:
 
-        zoom_expression = "1.05"
+        zoom_step = 0
 
-        x_expression = (
-            "iw/2-(iw/zoom/2)"
-        )
+    zoom_expression = (
+        f"min("
+        f"{zoom_start}+"
+        f"{zoom_step:.8f}*on,"
+        f"{zoom_end}"
+        f")"
+    )
 
-        y_expression = (
-            "ih/2-(ih/zoom/2)"
-        )
+    output_directory = os.path.dirname(
+        os.path.abspath(output_path)
+    )
 
-    # ========================================================
-    # ZOOMPAN FILTER
-    # ========================================================
+    os.makedirs(
+        output_directory,
+        exist_ok=True,
+    )
 
-    filter_string = (
-        "zoompan="
+    video_filter = (
+        f"scale={width}:{height}:"
+        f"force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},"
+        f"zoompan="
         f"z='{zoom_expression}':"
-        f"x='{x_expression}':"
-        f"y='{y_expression}':"
-        f"d={frames}:"
+        f"x='iw/2-(iw/zoom/2)':"
+        f"y='ih/2-(ih/zoom/2)':"
+        f"d={total_frames}:"
         f"s={width}x{height}:"
         f"fps={FPS}"
     )
 
     command = [
         FFMPEG,
-
         "-y",
-
         "-loop",
         "1",
-
         "-i",
         image_path,
-
-        "-vf",
-        filter_string,
-
         "-t",
         str(duration),
-
+        "-vf",
+        video_filter,
         "-r",
         str(FPS),
-
         "-an",
-
         "-c:v",
         "libx264",
-
-        "-preset",
-        "veryfast",
-
-        "-crf",
-        "23",
-
         "-pix_fmt",
         "yuv420p",
-
-        "-movflags",
-        "+faststart",
-
         output_path,
     ]
 
@@ -356,16 +154,126 @@ def create_motion_scene(
     if result.returncode != 0:
 
         raise RuntimeError(
-            "Motion scene generation failed:\n"
+            "FFmpeg failed while creating the motion scene.\n\n"
             + result.stderr[-4000:]
         )
 
-    if not os.path.exists(
-        output_path
-    ):
+    if not os.path.exists(output_path):
 
         raise RuntimeError(
-            "Motion scene was not created."
+            "FFmpeg completed, but the output video "
+            "was not created."
+        )
+
+    return output_path
+
+
+def create_motion_scene_landscape(
+    image_path,
+    output_path,
+    duration,
+    width=1920,
+    height=1080,
+    zoom_start=1.0,
+    zoom_end=1.08,
+):
+    """
+    Create a 16:9 animated video
+    from a still image using a slow zoom effect.
+    """
+
+    if not os.path.exists(image_path):
+        raise FileNotFoundError(
+            f"Image not found: {image_path}"
+        )
+
+    duration = max(float(duration), 0.1)
+
+    total_frames = max(
+        int(duration * FPS),
+        1,
+    )
+
+    if total_frames > 1:
+
+        zoom_step = (
+            zoom_end - zoom_start
+        ) / (total_frames - 1)
+
+    else:
+
+        zoom_step = 0
+
+    zoom_expression = (
+        f"min("
+        f"{zoom_start}+"
+        f"{zoom_step:.8f}*on,"
+        f"{zoom_end}"
+        f")"
+    )
+
+    output_directory = os.path.dirname(
+        os.path.abspath(output_path)
+    )
+
+    os.makedirs(
+        output_directory,
+        exist_ok=True,
+    )
+
+    video_filter = (
+        f"scale={width}:{height}:"
+        f"force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},"
+        f"zoompan="
+        f"z='{zoom_expression}':"
+        f"x='iw/2-(iw/zoom/2)':"
+        f"y='ih/2-(ih/zoom/2)':"
+        f"d={total_frames}:"
+        f"s={width}x{height}:"
+        f"fps={FPS}"
+    )
+
+    command = [
+        FFMPEG,
+        "-y",
+        "-loop",
+        "1",
+        "-i",
+        image_path,
+        "-t",
+        str(duration),
+        "-vf",
+        video_filter,
+        "-r",
+        str(FPS),
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        output_path,
+    ]
+
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    if result.returncode != 0:
+
+        raise RuntimeError(
+            "FFmpeg failed while creating the landscape motion scene.\n\n"
+            + result.stderr[-4000:]
+        )
+
+    if not os.path.exists(output_path):
+
+        raise RuntimeError(
+            "FFmpeg completed, but the output video "
+            "was not created."
         )
 
     return output_path
