@@ -65,6 +65,7 @@ def create_motion_scene(
     height=1920,
     zoom_start=1.0,
     zoom_end=1.08,
+    effect="zoom_in",
 ):
     """
     Create a vertical 9:16 animated video
