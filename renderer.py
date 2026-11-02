@@ -1,385 +1,271 @@
+
 import os
 import subprocess
 
-
-# ============================================================
-# FFMPEG
-# ============================================================
+from config import FONT_DIR
 
 FFMPEG = "ffmpeg"
 
 
-# ============================================================
-# RUN FFMPEG
-# ============================================================
-
 def run_ffmpeg(command):
-    """
-    Run an FFmpeg command and raise an error if it fails.
-    """
-
-    result = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    """Execute FFmpeg and report useful errors."""
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "FFmpeg is not installed or not available in PATH."
+        ) from exc
 
     if result.returncode != 0:
         raise RuntimeError(
-            "FFmpeg failed:\n\n"
-            + result.stderr[-5000:]
+            "FFmpeg error:\n" + result.stderr[-6000:]
         )
 
     return result
 
 
-# ============================================================
-# CONCATENATE VIDEOS
-# ============================================================
-
-def concatenate_videos(video_paths, output_path):
-    """
-    Concatenate multiple video files into one video.
-    """
-
-    if not video_paths:
-        raise ValueError("No video files were provided.")
-
-    valid_paths = [
-        path for path in video_paths
-        if path and os.path.exists(path)
-    ]
-
-    if not valid_paths:
-        raise FileNotFoundError(
-            "None of the video files exist."
-        )
-
-    output_directory = os.path.dirname(
-        os.path.abspath(output_path)
-    )
+def prepare_output(output_path):
+    if not output_path:
+        raise ValueError("Output path is required.")
 
     os.makedirs(
-        output_directory,
+        os.path.dirname(os.path.abspath(output_path)),
         exist_ok=True,
     )
 
-    list_file = os.path.join(
-        output_directory,
-        "video_concat_list.txt",
-    )
 
-    with open(
-        list_file,
-        "w",
-        encoding="utf-8",
-    ) as f:
+def validate_files(paths, description):
+    if not paths:
+        raise ValueError(f"No {description} files provided.")
 
-        for path in valid_paths:
-
-            absolute_path = os.path.abspath(path)
-
-            safe_path = (
-                absolute_path
-                .replace("\\", "/")
-                .replace("'", "'\\''")
-            )
-
-            f.write(
-                f"file '{safe_path}'\n"
-            )
-
-    command = [
-        FFMPEG,
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        list_file,
-        "-c",
-        "copy",
-        output_path,
+    valid = [
+        os.fspath(path)
+        for path in paths
+        if path and os.path.isfile(path)
     ]
 
-    try:
-
-        run_ffmpeg(command)
-
-    finally:
-
-        if os.path.exists(list_file):
-            os.remove(list_file)
-
-    if not os.path.exists(output_path):
-        raise RuntimeError(
-            "FFmpeg completed, but the "
-            "concatenated video was not created."
-        )
-
-    return output_path
-
-
-# ============================================================
-# CONCATENATE AUDIO
-# ============================================================
-
-def concatenate_audio(audio_paths, output_path):
-    """
-    Concatenate multiple audio files into one audio file.
-    """
-
-    if not audio_paths:
-        raise ValueError("No audio files were provided.")
-
-    valid_paths = [
-        path for path in audio_paths
-        if path and os.path.exists(path)
-    ]
-
-    if not valid_paths:
+    if not valid:
         raise FileNotFoundError(
-            "None of the audio files exist."
+            f"No valid {description} files found."
         )
 
-    output_directory = os.path.dirname(
+    return valid
+
+
+def create_concat_list(paths, output_path, name):
+    directory = os.path.dirname(
         os.path.abspath(output_path)
     )
 
-    os.makedirs(
-        output_directory,
-        exist_ok=True,
+    list_path = os.path.join(
+        directory,
+        f"{name}_concat_list.txt"
     )
 
-    list_file = os.path.join(
-        output_directory,
-        "audio_concat_list.txt",
-    )
+    with open(list_path, "w", encoding="utf-8") as file:
+        for path in paths:
+            path = os.path.abspath(path).replace("\\", "/")
+            path = path.replace("'", "'\\''")
+            file.write(f"file '{path}'\n")
 
-    with open(
-        list_file,
-        "w",
-        encoding="utf-8",
-    ) as f:
-
-        for path in valid_paths:
-
-            absolute_path = os.path.abspath(path)
-
-            safe_path = (
-                absolute_path
-                .replace("\\", "/")
-                .replace("'", "'\\''")
-            )
-
-            f.write(
-                f"file '{safe_path}'\n"
-            )
-
-    command = [
-        FFMPEG,
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        list_file,
-        "-c",
-        "copy",
-        output_path,
-    ]
-
-    try:
-
-        run_ffmpeg(command)
-
-    finally:
-
-        if os.path.exists(list_file):
-            os.remove(list_file)
-
-    if not os.path.exists(output_path):
-        raise RuntimeError(
-            "FFmpeg completed, but the "
-            "concatenated audio was not created."
-        )
-
-    return output_path
+    return list_path
 
 
-# ============================================================
-# MUX AUDIO + VIDEO
-# ============================================================
-
-def mux_audio(
-    video_path,
-    audio_path,
-    output_path,
+def concatenate_videos(
+    video_paths=None,
+    output_path=None,
+    video_files=None
 ):
-    """
-    Combine a video file and an audio file.
-    """
+    # Support old and new app.py argument names.
+    if video_paths is None:
+        video_paths = video_files
 
-    if not os.path.exists(video_path):
-        raise FileNotFoundError(
-            f"Video not found: {video_path}"
-        )
+    videos = validate_files(video_paths, "video")
+    prepare_output(output_path)
 
-    if not os.path.exists(audio_path):
-        raise FileNotFoundError(
-            f"Audio not found: {audio_path}"
-        )
-
-    output_directory = os.path.dirname(
-        os.path.abspath(output_path)
+    concat_list = create_concat_list(
+        videos, output_path, "video"
     )
 
-    os.makedirs(
-        output_directory,
-        exist_ok=True,
+    try:
+        run_ffmpeg([
+            FFMPEG, "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", concat_list,
+            "-c", "copy",
+            "-movflags", "+faststart",
+            output_path
+        ])
+    finally:
+        if os.path.exists(concat_list):
+            os.remove(concat_list)
+
+    return output_path
+
+
+def concatenate_audio(
+    audio_paths=None,
+    output_path=None,
+    audio_files=None
+):
+    # Support old and new app.py argument names.
+    if audio_paths is None:
+        audio_paths = audio_files
+
+    audios = validate_files(audio_paths, "audio")
+    prepare_output(output_path)
+
+    concat_list = create_concat_list(
+        audios, output_path, "audio"
     )
 
-    command = [
-        FFMPEG,
-        "-y",
+    try:
+        run_ffmpeg([
+            FFMPEG, "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", concat_list,
+            "-c", "copy",
+            output_path
+        ])
+    finally:
+        if os.path.exists(concat_list):
+            os.remove(concat_list)
 
-        "-i",
-        video_path,
+    return output_path
 
-        "-i",
-        audio_path,
 
-        "-map",
-        "0:v:0",
+def mux_audio(video_path, audio_path, output_path):
+    """Combine video and narration audio."""
 
-        "-map",
-        "1:a:0",
+    if not os.path.isfile(video_path):
+        raise FileNotFoundError(video_path)
 
-        "-c:v",
-        "copy",
+    if not os.path.isfile(audio_path):
+        raise FileNotFoundError(audio_path)
 
-        "-c:a",
-        "aac",
+    prepare_output(output_path)
 
-        "-b:a",
-        "192k",
-
+    run_ffmpeg([
+        FFMPEG, "-y",
+        "-i", video_path,
+        "-i", audio_path,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "192k",
         "-shortest",
-
-        "-movflags",
-        "+faststart",
-
-        output_path,
-    ]
-
-    run_ffmpeg(command)
-
-    if not os.path.exists(output_path):
-        raise RuntimeError(
-            "FFmpeg completed, but the final "
-            "video was not created."
-        )
+        "-movflags", "+faststart",
+        output_path
+    ])
 
     return output_path
 
 
-# ============================================================
-# ADD AUDIO TO VIDEO
-# ============================================================
-
-def add_audio_to_video(
+def burn_captions(
     video_path,
-    audio_path,
-    output_path,
+    subtitle_path,
+    output_path
 ):
-    """
-    Alias for mux_audio().
-    """
+    """Burn Hindi/English SRT subtitles into the video."""
 
-    return mux_audio(
-        video_path,
-        audio_path,
-        output_path,
+    if not os.path.isfile(video_path):
+        raise FileNotFoundError(video_path)
+
+    if not os.path.isfile(subtitle_path):
+        raise FileNotFoundError(subtitle_path)
+
+    prepare_output(output_path)
+
+    def escape_path(path):
+        path = os.path.abspath(path).replace("\\", "/")
+        for char in ("\\", ":", "'", ",", "[", "]"):
+            path = path.replace(char, "\\" + char)
+        return path
+
+    subtitle = escape_path(subtitle_path)
+    fonts = escape_path(FONT_DIR)
+
+    style = (
+        "FontName=Noto Sans Devanagari,"
+        "FontSize=24,"
+        "PrimaryColour=&H00FFFFFF,"
+        "OutlineColour=&H00000000,"
+        "BorderStyle=1,"
+        "Outline=2,"
+        "Shadow=1,"
+        "Alignment=2,"
+        "MarginV=70"
     )
 
+    subtitle_filter = (
+        f"subtitles=filename='{subtitle}'"
+        f":fontsdir='{fonts}'"
+        f":force_style='{style}'"
+    )
 
-# ============================================================
-# NORMALIZE VIDEO
-# ============================================================
+    run_ffmpeg([
+        FFMPEG, "-y",
+        "-i", video_path,
+        "-vf", subtitle_filter,
+        "-map", "0:v:0",
+        "-map", "0:a?",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        output_path
+    ])
+
+    return output_path
+
 
 def normalize_video(
     input_path,
     output_path,
     width=1080,
     height=1920,
-    fps=30,
+    fps=30
 ):
-    """
-    Re-encode a video to a standard MP4 format.
-    """
+    """Normalize video dimensions, frame rate and encoding."""
 
-    if not os.path.exists(input_path):
-        raise FileNotFoundError(
-            f"Video not found: {input_path}"
-        )
+    if not os.path.isfile(input_path):
+        raise FileNotFoundError(input_path)
 
-    output_directory = os.path.dirname(
-        os.path.abspath(output_path)
-    )
-
-    os.makedirs(
-        output_directory,
-        exist_ok=True,
-    )
+    prepare_output(output_path)
 
     video_filter = (
         f"scale={width}:{height}:"
         "force_original_aspect_ratio=decrease,"
-        f"pad={width}:{height}:"
-        f"(ow-iw)/2:"
-        f"(oh-ih)/2"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
     )
 
-    command = [
-        FFMPEG,
-        "-y",
-
-        "-i",
-        input_path,
-
-        "-vf",
-        video_filter,
-
-        "-r",
-        str(fps),
-
-        "-c:v",
-        "libx264",
-
-        "-preset",
-        "medium",
-
-        "-crf",
-        "23",
-
-        "-pix_fmt",
-        "yuv420p",
-
-        "-movflags",
-        "+faststart",
-
-        output_path,
-    ]
-
-    run_ffmpeg(command)
-
-    if not os.path.exists(output_path):
-        raise RuntimeError(
-            "FFmpeg completed, but the normalized "
-            "video was not created."
-        )
+    run_ffmpeg([
+        FFMPEG, "-y",
+        "-i", input_path,
+        "-vf", video_filter,
+        "-r", str(fps),
+        "-map", "0:v:0",
+        "-map", "0:a?",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-movflags", "+faststart",
+        output_path
+    ])
 
     return output_path
+            
