@@ -79,37 +79,43 @@ def create_motion_scene(
 
     duration = max(float(duration), 0.1)
 
-    total_frames = max(
-        int(duration * FPS),
-        1,
+    total_frames = max(int(duration * FPS), 1)
+
+    if effect == "zoom_out":
+        zoom_start, zoom_end = 1.08, 1.0
+
+    elif effect in ("pan_left", "pan_right"):
+        zoom_start = zoom_end = 1.08
+
+    elif effect != "zoom_in":
+        raise ValueError(f"Unsupported motion effect: {effect}")
+
+    zoom_step = (
+        (zoom_end - zoom_start) / (total_frames - 1)
+        if total_frames > 1 else 0
     )
-
-    if total_frames > 1:
-
-        zoom_step = (
-            zoom_end - zoom_start
-        ) / (total_frames - 1)
-
-    else:
-
-        zoom_step = 0
 
     zoom_expression = (
-        f"min("
-        f"{zoom_start}+"
-        f"{zoom_step:.8f}*on,"
-        f"{zoom_end}"
-        f")"
+        f"min({zoom_start}+{zoom_step:.8f}*on,{zoom_end})"
     )
+
+    denominator = max(total_frames - 1, 1)
+
+    if effect == "pan_left":
+        x_expression = (
+            f"(iw-iw/zoom)*(1-on/{denominator})"
+        )
+    elif effect == "pan_right":
+        x_expression = (
+            f"(iw-iw/zoom)*(on/{denominator})"
+        )
+    else:
+        x_expression = "iw/2-(iw/zoom/2)"
 
     output_directory = os.path.dirname(
         os.path.abspath(output_path)
     )
-
-    os.makedirs(
-        output_directory,
-        exist_ok=True,
-    )
+    os.makedirs(output_directory, exist_ok=True)
 
     video_filter = (
         f"scale={width}:{height}:"
@@ -117,13 +123,13 @@ def create_motion_scene(
         f"crop={width}:{height},"
         f"zoompan="
         f"z='{zoom_expression}':"
-        f"x='iw/2-(iw/zoom/2)':"
+        f"x='{x_expression}':"
         f"y='ih/2-(ih/zoom/2)':"
         f"d={total_frames}:"
         f"s={width}x{height}:"
         f"fps={FPS}"
     )
-
+    
     command = [
         FFMPEG,
         "-y",
